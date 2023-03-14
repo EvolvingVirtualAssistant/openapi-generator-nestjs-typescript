@@ -1,0 +1,26 @@
+# intellij
+.idea
+*.iml
+
+# vscode
+*.vscode
+*.bundle.js
+.secrets/
+
+# npm
+node_modules
+dist
+package-lock.json
+# jest
+coverage
+
+# test temp file
+tempSampleNodesOptions.json
+
+# java
+target/
+out/
+*.jar
+
+# oa
+generated/
