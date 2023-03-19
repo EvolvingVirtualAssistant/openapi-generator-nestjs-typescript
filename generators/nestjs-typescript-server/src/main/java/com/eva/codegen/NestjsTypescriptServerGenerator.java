@@ -2,6 +2,7 @@ package com.eva.codegen;
 
 import com.eva.codegen.lambda.NestJsPathResolveLambda;
 import io.swagger.v3.oas.models.media.Schema;
+import java.util.stream.Collectors;
 import org.openapitools.codegen.*;
 import org.openapitools.codegen.model.*;
 
@@ -59,7 +60,35 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     for(CodegenOperation co : opList){
       // example:
       // co.httpMethod = co.httpMethod.toLowerCase();
+      co.returnType = typeMapping().getOrDefault(co.returnType, co.returnType);
+      co.returnBaseType = typeMapping().getOrDefault(co.returnBaseType, co.returnBaseType);
     }
+
+    objs.getImports().forEach(imports -> System.out.println("Map:"+imports.entrySet().stream()
+        .map(entry -> String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue()))
+        .collect(Collectors.joining(" ; "))));
+
+    final List<String> languagePrimitives = languageSpecificPrimitives.stream().map(String::toLowerCase).collect(Collectors.toList());
+    typeMapping.keySet().stream().map(String::toLowerCase).forEach(languagePrimitives::add);
+
+    List<Map<String, String>> operationsImports = objs.getImports().stream().map(importMap -> {
+      Map<String, String> newImportMap = new HashMap<>();
+      final Set<String> filesToBeFiltered = importMap.entrySet().stream()
+          .filter(entry -> entry.getKey().equals("classname"))
+          .filter(entry -> languagePrimitives.contains(entry.getValue().toLowerCase()))
+          .map(Map.Entry::getValue)
+          .map(String::toLowerCase)
+          .peek(value -> System.out.println("value:"+value))
+          .collect(Collectors.toSet());
+
+      importMap.entrySet().stream()
+          .peek(entry -> System.out.println("entry:"+String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue())))
+          .filter(entry -> !filesToBeFiltered.contains(entry.getValue().toLowerCase().replace(this.modelPackage() + "/", "")))
+          .peek(entry -> System.out.println("entry_after:"+String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue())))
+          .forEach(entry -> newImportMap.put(entry.getKey(), entry.getValue()));
+      return newImportMap;
+    }).filter(importMap -> !importMap.isEmpty()).collect(Collectors.toList());
+    objs.put("operationsImports", operationsImports);
 
     return results;
   }
@@ -211,6 +240,16 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
   @Override
   public String apiFileFolder() {
     return outputFolder + "/" + sourceFolder + "/" + apiPackage().replace('.', File.separatorChar);
+  }
+
+  @Override
+  public String toModelImport(String name) {
+    return "".equals(this.modelPackage()) ? name : this.modelPackage() + "/" + name;
+  }
+
+  @Override
+  public String toApiImport(String name) {
+    return this.apiPackage() + "/" + name;
   }
 
   /**

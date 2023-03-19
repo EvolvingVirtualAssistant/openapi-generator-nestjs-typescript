@@ -1,7 +1,7 @@
 {{! imports }}
-{{#imports}}
-  import { {{classname}} } from '../{{import}}';
-{{/imports}}
+{{#operationsImports}}
+import { {{classname}} } from '../{{import}}';
+{{/operationsImports}}
 import { Controller, Get, Post, Put, Delete, Patch, Options, Head, Res, Query, Param, Headers, Body } from '@nestjs/common';
 import { Response } from 'express';
 
@@ -16,11 +16,11 @@ export abstract class {{classname}} {
   // {{paramName}}: {{dataType}}
   {{/allParams}}
   @{{#lambda.titlecase}}{{#lambda.lowercase}}{{httpMethod}}{{/lambda.lowercase}}{{/lambda.titlecase}}({{#lambda.pathresolve}}x-path:{{path}},x-baseName:{{baseName}}{{/lambda.pathresolve}})
-  {{operationId}}Handler(@Res() res: Response, {{#allParams}}{{>queryParams}}{{>pathParams}}{{>headerParams}}{{>bodyParams}}{{^-last}}, {{/-last}}{{/allParams}}) {
-    this.{{operationId}}(res, {{#allParams}}{{paramName}}{{^-last}}, {{/-last}}{{/allParams}});
+  {{operationId}}Handler(@Res({ passthrough: true }) res: Response{{#allParams}}, {{>queryParams}}{{>pathParams}}{{>headerParams}}{{>bodyParams}}{{^-last}}{{/-last}}{{/allParams}}): {{>returnTypes}} {
+    return this.{{operationId}}(res{{#allParams}}, {{paramName}}{{^-last}}{{/-last}}{{/allParams}});
   }
 
-  abstract {{operationId}}(res: Response, {{#allParams}}{{paramName}}: {{>dataType}}{{^-last}}, {{/-last}}{{/allParams}}): void;
+  abstract {{operationId}}(res: Response{{#allParams}}, {{paramName}}: {{>dataType}}{{^-last}}{{/-last}}{{/allParams}}): {{>returnTypes}};
 {{/operation}}
 
 {{/operations}}

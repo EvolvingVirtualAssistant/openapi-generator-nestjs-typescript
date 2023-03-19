@@ -5,8 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "openapi-generator-yeah": "npx @openapitools/openapi-generator-cli generate -i ../petstore-openapi.yml -g nestjs-typescript-server -o ../../output",
-    "openapi-generator": "npx @openapitools/openapi-generator-cli generate --generator-key nestjs-typescript-server --custom-generator=../../out/generators/nestjs-typescript-server/target/nestjs-typescript-server-openapi-generator-1.0.0.jar --global-property debugOpenAPI=true"
+    "openapi-generator": "npx @openapitools/openapi-generator-cli generate --generator-key nestjs-typescript-server --custom-generator=../../generators/nestjs-typescript-server/target/nestjs-typescript-server-openapi-generator-1.0.0.jar --global-property debugOpenAPI=true"
   },
   "author": "",
   "license": "ISC",
