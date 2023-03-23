@@ -2,6 +2,8 @@ package com.eva.codegen;
 
 import com.eva.codegen.lambda.NestJsPathResolveLambda;
 import io.swagger.v3.oas.models.media.Schema;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.openapitools.codegen.*;
 import org.openapitools.codegen.model.*;
@@ -15,10 +17,13 @@ import org.openapitools.codegen.templating.mustache.UppercaseLambda;
 
 public class NestjsTypescriptServerGenerator extends DefaultCodegen implements CodegenConfig {
 
+  private static final String X_DISCRIMINATOR_TYPE = "x-discriminator-value";
+
   // source folder where to write the files
   protected String sourceFolder = "src";
   protected String apiVersion = "1.0.0";
   protected HashSet<String> languageGenericTypes;
+  protected String classEnumSeparator = ".";
 
 
   /**
@@ -68,29 +73,110 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
         .map(entry -> String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue()))
         .collect(Collectors.joining(" ; "))));
 
-    final List<String> languagePrimitives = languageSpecificPrimitives.stream().map(String::toLowerCase).collect(Collectors.toList());
-    typeMapping.keySet().stream().map(String::toLowerCase).forEach(languagePrimitives::add);
+    //final List<String> languagePrimitives = languageSpecificPrimitives.stream().map(String::toLowerCase).collect(Collectors.toList());
+    //typeMapping.keySet().stream().map(String::toLowerCase).forEach(languagePrimitives::add);
 
-    List<Map<String, String>> operationsImports = objs.getImports().stream().map(importMap -> {
-      Map<String, String> newImportMap = new HashMap<>();
-      final Set<String> filesToBeFiltered = importMap.entrySet().stream()
-          .filter(entry -> entry.getKey().equals("classname"))
-          .filter(entry -> languagePrimitives.contains(entry.getValue().toLowerCase()))
-          .map(Map.Entry::getValue)
-          .map(String::toLowerCase)
-          .peek(value -> System.out.println("value:"+value))
-          .collect(Collectors.toSet());
-
-      importMap.entrySet().stream()
-          .peek(entry -> System.out.println("entry:"+String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue())))
-          .filter(entry -> !filesToBeFiltered.contains(entry.getValue().toLowerCase().replace(this.modelPackage() + "/", "")))
-          .peek(entry -> System.out.println("entry_after:"+String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue())))
-          .forEach(entry -> newImportMap.put(entry.getKey(), entry.getValue()));
-      return newImportMap;
-    }).filter(importMap -> !importMap.isEmpty()).collect(Collectors.toList());
+    List<Map<String, String>> operationsImports = objs.getImports().stream()
+        .map(getLanguageSpecificsImportsFilterMap())
+        .filter(importMap -> !importMap.isEmpty())
+        .collect(Collectors.toList());
     objs.put("operationsImports", operationsImports);
 
     return results;
+  }
+
+  private Function<Map<String, String>, Map<String, String>> getLanguageSpecificsImportsFilterMap() {
+      final List<String> languagePrimitives = languageSpecificPrimitives.stream().map(String::toLowerCase).collect(Collectors.toList());
+      typeMapping.keySet().stream().map(String::toLowerCase).forEach(languagePrimitives::add);
+
+      return importMap -> {
+          Map<String, String> newImportMap = new HashMap<>();
+          final Set<String> filesToBeFiltered = importMap.entrySet().stream()
+              .filter(entry -> entry.getKey().equals("classname"))
+              .filter(entry -> languagePrimitives.contains(entry.getValue().toLowerCase()))
+              .map(Map.Entry::getValue)
+              .map(String::toLowerCase)
+              .peek(value -> System.out.println("value:"+value))
+              .collect(Collectors.toSet());
+
+          importMap.entrySet().stream()
+              .peek(entry -> System.out.println("entry:"+String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue())))
+              .filter(entry -> !filesToBeFiltered.contains(entry.getValue().toLowerCase().replace(this.modelPackage() + "/", "")))
+              .peek(entry -> System.out.println("entry_after:"+String.format("{key: %s, value: %s}", entry.getKey(), entry.getValue())))
+              .forEach(entry -> newImportMap.put(entry.getKey(), entry.getValue()));
+          return newImportMap;
+      };
+  }
+
+  @Override
+  public ModelsMap postProcessModels(ModelsMap objs) {
+    // process enum in models
+    List<ModelMap> models = postProcessModelsEnum(objs).getModels();
+    for (ModelMap mo : models) {
+      CodegenModel cm = mo.getModel();
+      cm.imports = new TreeSet<>(cm.imports);
+      // name enum with model name, e.g. StatusEnum => Pet.StatusEnum
+      for (CodegenProperty var : cm.vars) {
+        if (Boolean.TRUE.equals(var.isEnum)) {
+          var.datatypeWithEnum = var.datatypeWithEnum.replace(var.enumName, cm.classname + classEnumSeparator + var.enumName);
+        }
+      }
+      if (cm.parent != null) {
+        for (CodegenProperty var : cm.allVars) {
+          if (Boolean.TRUE.equals(var.isEnum)) {
+            var.datatypeWithEnum = var.datatypeWithEnum
+                .replace(var.enumName, cm.classname + classEnumSeparator + var.enumName);
+          }
+        }
+      }
+    }
+    for (ModelMap mo : models) {
+      CodegenModel cm = mo.getModel();
+      // Add additional filename information for imports
+      List<Map<String,String>> tsImports = toTsImports(cm, cm.imports).stream()
+          .map(getLanguageSpecificsImportsFilterMap())
+          .filter(importMap -> !importMap.isEmpty())
+          .map(importMap -> {
+              Optional.ofNullable(importMap.get("filename"))
+                  .map(filePath -> filePath.replace(this.modelPackage + "/", ""))
+                  .ifPresent(filePath -> importMap.put("filename", filePath));
+              return importMap;
+          })
+          .collect(Collectors.toList());
+      mo.put("tsImports", tsImports);
+    }
+    return objs;
+  }
+
+  private List<Map<String, String>> toTsImports(CodegenModel cm, Set<String> imports) {
+    List<Map<String, String>> tsImports = new ArrayList<>();
+    for (String im : imports) {
+      if (!im.equals(cm.classname)) {
+        HashMap<String, String> tsImport = new HashMap<>();
+        // TVG: This is used as class name in the import statements of the model file
+        tsImport.put("classname", im);
+        tsImport.put("filename", importMapping.getOrDefault(im, toModelImport(im)));
+        tsImports.add(tsImport);
+      }
+    }
+    return tsImports;
+  }
+
+  @Override
+  public Map<String, ModelsMap> postProcessAllModels(Map<String, ModelsMap> objs) {
+    Map<String, ModelsMap> result = super.postProcessAllModels(objs);
+
+    for (ModelsMap entry : result.values()) {
+      for (ModelMap mo : entry.getModels()) {
+        CodegenModel cm = mo.getModel();
+        if (cm.discriminator != null && cm.children != null) {
+          for (CodegenModel child : cm.children) {
+            this.setDiscriminatorValue(child, cm.discriminator.getPropertyName(), this.getDiscriminatorValue(child));
+          }
+        }
+      }
+    }
+    return result;
   }
 
   /**
@@ -190,7 +276,7 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
      */
     this.defaultIncludes = new HashSet(Arrays.asList("double", "int", "long", "short", "char", "float", "String", "boolean", "Boolean", "Double", "Void", "Integer", "Long", "Float"));
     this.typeMapping = new HashMap();
-    this.typeMapping.put("array", "List");
+    this.typeMapping.put("array", "Array");
     this.typeMapping.put("set", "Set");
     this.typeMapping.put("map", "Map");
     this.typeMapping.put("boolean", "boolean");
@@ -316,5 +402,24 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
   public void postProcessParameter(CodegenParameter parameter) {
     super.postProcessParameter(parameter);
     parameter.dataType = this.applyLocalTypeMapping(parameter.dataType);
+  }
+
+  private void setDiscriminatorValue(CodegenModel model, String baseName, String value) {
+    for (CodegenProperty prop : model.allVars) {
+      if (prop.baseName.equals(baseName)) {
+        prop.discriminatorValue = value;
+      }
+    }
+    if (model.children != null) {
+      final boolean newDiscriminator = model.discriminator != null;
+      for (CodegenModel child : model.children) {
+        this.setDiscriminatorValue(child, baseName, newDiscriminator ? value : this.getDiscriminatorValue(child));
+      }
+    }
+  }
+
+  private String getDiscriminatorValue(CodegenModel model) {
+    return model.vendorExtensions.containsKey(X_DISCRIMINATOR_TYPE) ?
+        (String) model.vendorExtensions.get(X_DISCRIMINATOR_TYPE) : model.classname;
   }
 }
