@@ -8,13 +8,9 @@ import { Response } from 'express';
 @Controller('{{#lambda.lowercase}}{{baseName}}{{/lambda.lowercase}}')
 export abstract class {{classname}} {
 {{#operations}}
-
 {{! # loop over each operation in the API: }}
 {{#operation}}
-  // Params:
-  {{#allParams}}
-  // {{paramName}}: {{dataType}}
-  {{/allParams}}
+
   @{{#lambda.titlecase}}{{#lambda.lowercase}}{{httpMethod}}{{/lambda.lowercase}}{{/lambda.titlecase}}({{#lambda.pathresolve}}x-path:{{path}},x-baseName:{{baseName}}{{/lambda.pathresolve}})
   {{operationId}}Handler(@Res({ passthrough: true }) res: Response{{#allParams}}, {{>queryParams}}{{>pathParams}}{{>headerParams}}{{>bodyParams}}{{^-last}}{{/-last}}{{/allParams}}): {{>returnTypes}} {
     return this.{{operationId}}(res{{#allParams}}, {{paramName}}{{^-last}}{{/-last}}{{/allParams}});

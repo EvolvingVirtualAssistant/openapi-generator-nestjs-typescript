@@ -1,1 +1,1 @@
-{{#isArray}}Array<{{baseType}}>{{/isArray}}{{^isArray}}{{#isMap}}Map<string, {{baseType}}>{{/isMap}}{{^isMap}}{{dataType}}{{/isMap}}{{/isArray}}
+{{#isArray}}Array<{{items.dataType}}>{{/isArray}}{{^isArray}}{{#isMap}}Map<string, {{items.dataType}}>{{/isMap}}{{^isMap}}{{dataType}}{{/isMap}}{{/isArray}}

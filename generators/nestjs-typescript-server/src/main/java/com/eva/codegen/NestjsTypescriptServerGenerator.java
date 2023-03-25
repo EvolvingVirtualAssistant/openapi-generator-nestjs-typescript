@@ -1,10 +1,15 @@
 package com.eva.codegen;
 
+import static org.openapitools.codegen.utils.StringUtils.camelize;
+
 import com.eva.codegen.lambda.NestJsPathResolveLambda;
 import io.swagger.v3.oas.models.media.Schema;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import org.apache.commons.lang3.StringUtils;
 import org.openapitools.codegen.*;
 import org.openapitools.codegen.model.*;
 
@@ -14,9 +19,13 @@ import org.openapitools.codegen.templating.mustache.CamelCaseLambda;
 import org.openapitools.codegen.templating.mustache.LowercaseLambda;
 import org.openapitools.codegen.templating.mustache.TitlecaseLambda;
 import org.openapitools.codegen.templating.mustache.UppercaseLambda;
+import org.openapitools.codegen.utils.ModelUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class NestjsTypescriptServerGenerator extends DefaultCodegen implements CodegenConfig {
 
+  private final Logger LOGGER = LoggerFactory.getLogger(NestjsTypescriptServerGenerator.class);
   private static final String X_DISCRIMINATOR_TYPE = "x-discriminator-value";
 
   // source folder where to write the files
@@ -65,8 +74,14 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     for(CodegenOperation co : opList){
       // example:
       // co.httpMethod = co.httpMethod.toLowerCase();
-      co.returnType = typeMapping().getOrDefault(co.returnType, co.returnType);
-      co.returnBaseType = typeMapping().getOrDefault(co.returnBaseType, co.returnBaseType);
+      co.returnType = toModelName(typeMapping().getOrDefault(co.returnType, co.returnType));
+      co.returnBaseType = toModelName(typeMapping().getOrDefault(co.returnBaseType, co.returnBaseType));
+      co.allParams.forEach(param -> {
+        final String paramDataType = param.dataType;
+        param.dataType = toModelName(paramDataType);
+
+        updateParamsNestedItemsDataType(param.items);
+      });
     }
 
     objs.getImports().forEach(imports -> System.out.println("Map:"+imports.entrySet().stream()
@@ -79,11 +94,28 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     List<Map<String, String>> operationsImports = objs.getImports().stream()
         .map(getLanguageSpecificsImportsFilterMap())
         .filter(importMap -> !importMap.isEmpty())
+        .map(importMap -> {
+          String classname = importMap.get("classname");
+          String modelName = toModelName(classname);
+          importMap.put("classname", modelName);
+          importMap.put("filename", importMap.get("import"));
+          return importMap;
+        })
         .collect(Collectors.toList());
     objs.put("operationsImports", operationsImports);
 
     return results;
   }
+
+  private void updateParamsNestedItemsDataType(CodegenProperty items) {
+    if(items == null) {
+      return;
+    }
+
+    items.setDatatype(toModelName(items.getDataType()));
+
+    updateParamsNestedItemsDataType(items.getItems());
+  };
 
   private Function<Map<String, String>, Map<String, String>> getLanguageSpecificsImportsFilterMap() {
       final List<String> languagePrimitives = languageSpecificPrimitives.stream().map(String::toLowerCase).collect(Collectors.toList());
@@ -132,8 +164,9 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     }
     for (ModelMap mo : models) {
       CodegenModel cm = mo.getModel();
+      System.out.println("Model:"+cm.name);
       // Add additional filename information for imports
-      List<Map<String,String>> tsImports = toTsImports(cm, cm.imports).stream()
+      List<Map<String,String>> tsImports = toTsImports(cm, cm.imports, objs.getImportsOrEmpty()).stream()
           .map(getLanguageSpecificsImportsFilterMap())
           .filter(importMap -> !importMap.isEmpty())
           .map(importMap -> {
@@ -142,24 +175,56 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
                   .ifPresent(filePath -> importMap.put("filename", filePath));
               return importMap;
           })
+          .peek(importMap -> System.out.println(importMap.entrySet().stream()
+              .map(im -> String.format("{key:%s,value:%s}",im.getKey(), im.getValue()))
+              .collect(Collectors.joining(";"))))
           .collect(Collectors.toList());
       mo.put("tsImports", tsImports);
     }
     return objs;
   }
 
-  private List<Map<String, String>> toTsImports(CodegenModel cm, Set<String> imports) {
+  private List<Map<String, String>> toTsImports(CodegenModel cm, Set<String> modelImports, List<Map<String,String>> allImports) {
     List<Map<String, String>> tsImports = new ArrayList<>();
-    for (String im : imports) {
-      if (!im.equals(cm.classname)) {
+    Set<String> allImportsNames = allImports.stream()
+        .map(imports -> imports.get("import"))
+        .map(im -> im.replace(modelPackage()+"/",""))
+        .collect(Collectors.toSet());
+    for (String im: modelImports) {
+      String modelName = toModelName(im);
+
+      System.out.println(String.format("Import:%s ; cm.className:%s", modelName, cm.classname));
+      if (!modelName.equals(cm.classname) && allImportsNames.contains(modelName)) {
         HashMap<String, String> tsImport = new HashMap<>();
         // TVG: This is used as class name in the import statements of the model file
-        tsImport.put("classname", im);
+        cm.getVars().stream()
+            .forEach(var -> {
+              if(im.equals(var.getDataType())) {
+                var.setDatatype(modelName);
+                return;
+              }
+
+              updateVarNestedItemsDataType(var.getItems(), im, modelName);
+            });
+        tsImport.put("classname", modelName);
         tsImport.put("filename", importMapping.getOrDefault(im, toModelImport(im)));
+        System.out.println(String.format("classname:%s ; filename:%s", im, tsImport.get("filename")));
         tsImports.add(tsImport);
       }
     }
     return tsImports;
+  }
+
+  private void updateVarNestedItemsDataType(CodegenProperty items, String importName, String modelName) {
+    if(items == null) {
+      return;
+    }
+
+    if(importName.equals(items.getDataType())) {
+      items.setDatatype(modelName);
+      return;
+    }
+    updateVarNestedItemsDataType(items.getItems(), importName, modelName);
   }
 
   @Override
@@ -196,6 +261,7 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     outputFolder = "generated-code/nestjs-typescript-server";
 
     apiNameSuffix = "BaseController";
+    modelNameSuffix = "Dto";
 
     /**
      * Models.  You can write model files using the modelTemplateFiles map.
@@ -267,7 +333,7 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
      * Language Specific Primitives.  These types will not trigger imports by
      * the client generator
      */
-    this.languageSpecificPrimitives = new HashSet(Arrays.asList("string", "String", "boolean", "Boolean", "Double", "Integer", "Long", "Float", "Object", "Array", "ReadonlyArray", "Date", "number", "any", "File", "Error", "Map", "object", "Set"));
+    this.languageSpecificPrimitives = new HashSet(Arrays.asList("string", "String", "boolean", "Boolean", "Double", "Integer", "Long", "Float", "Object", "Array", "ReadonlyArray", "Date", "number", "bigint", "any", "File", "Error", "Map", "object", "Set"));
     this.languageGenericTypes = new HashSet(Collections.singletonList("Array"));
     this.instantiationTypes.put("array", "Array");
 
@@ -300,6 +366,90 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     this.typeMapping.put("AnyType", "oas_any_type_not_mapped");
   }
 
+  @Override
+  public String toModelName(final String name) {
+    if(StringUtils.isEmpty(name)) {
+      return name;
+    }
+
+    String fullModelName = name;
+
+    final List<String> languagePrimitives = languageSpecificPrimitives.stream()
+          .map(String::toLowerCase)
+          .collect(Collectors.toList());
+    typeMapping.keySet().stream()
+          .map(String::toLowerCase)
+          .forEach(languagePrimitives::add);
+
+    if(languagePrimitives.contains(name.toLowerCase())) {
+        return name;
+    }
+
+    if(!StringUtils.isEmpty(modelNamePrefix) && !name.toLowerCase().startsWith(modelNamePrefix.toLowerCase())) {
+        fullModelName = addPrefix(fullModelName, modelNamePrefix);
+    }
+
+    if(!StringUtils.isEmpty(modelNameSuffix) && !name.toLowerCase().endsWith(modelNameSuffix.toLowerCase())) {
+        fullModelName = addSuffix(fullModelName, modelNameSuffix);
+    }
+
+    return toTypescriptTypeName(fullModelName, "Model");
+  }
+
+  protected String addPrefix(String name, String prefix) {
+    if (!StringUtils.isEmpty(prefix)) {
+      name = prefix + "_" + name;
+    }
+    return name;
+  }
+
+  protected String addSuffix(String name, String suffix) {
+    if (!StringUtils.isEmpty(suffix)) {
+      name = name + "_" + suffix;
+    }
+
+    return name;
+  }
+
+  protected String toTypescriptTypeName(final String name, String safePrefix) {
+    ArrayList<String> exceptions = new ArrayList<>(Arrays.asList("\\|", " "));
+    String sanName = sanitizeName(name, "(?![| ])\\W", exceptions);
+
+    sanName = camelize(sanName);
+
+    // model name cannot use reserved keyword, e.g. return
+    // this is unlikely to happen, because we have just camelized the name, while reserved words are usually all lowercase
+    if (isReservedWord(sanName)) {
+      String modelName = safePrefix + sanName;
+      System.out.println();
+      LOGGER.warn("{} (reserved word) cannot be used as model name. Renamed to {}", sanName, modelName);
+      return modelName;
+    }
+
+    // model name starts with number
+    if (sanName.matches("^\\d.*")) {
+      String modelName = safePrefix + sanName; // e.g. 200Response => Model200Response
+      LOGGER.warn("{} (model name starts with number) cannot be used as model name. Renamed to {}", sanName,
+          modelName);
+      return modelName;
+    }
+
+    if (languageSpecificPrimitives.contains(sanName)) {
+      String modelName = safePrefix + sanName;
+      LOGGER.warn("{} (model name matches existing language type) cannot be used as a model name. Renamed to {}",
+          sanName, modelName);
+      return modelName;
+    }
+
+    return sanName;
+  }
+
+  @Override
+  public String toModelFilename(String name) {
+    // should be the same as the model name
+    return toModelName(name);
+  }
+
   /**
    * Escapes a reserved word as defined in the `reservedWords` array. Handle escaping
    * those terms here.  This logic is only called if a variable matches the reserved words
@@ -330,7 +480,7 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
 
   @Override
   public String toModelImport(String name) {
-    return "".equals(this.modelPackage()) ? name : this.modelPackage() + "/" + name;
+    return "".equals(this.modelPackage()) ? name : this.modelPackage() + "/" + toModelName(name);
   }
 
   @Override
@@ -422,4 +572,5 @@ public class NestjsTypescriptServerGenerator extends DefaultCodegen implements C
     return model.vendorExtensions.containsKey(X_DISCRIMINATOR_TYPE) ?
         (String) model.vendorExtensions.get(X_DISCRIMINATOR_TYPE) : model.classname;
   }
+
 }
